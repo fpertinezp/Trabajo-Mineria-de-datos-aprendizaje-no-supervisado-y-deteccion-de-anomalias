@@ -1,0 +1,316 @@
+---
+title: "Trabajo Agrupación:  Palmer penguins"
+author: "Francisco Pertíñez Perea"
+lang: es
+format:
+  html:
+    code-tools: true
+    code-fold: true
+---
+
+Importación de librerías necesarias:
+
+```{python}
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
+from palmerpenguins import load_penguins
+from yellowbrick.features import Rank1D, Rank2D
+```
+
+# Introducción general y objetivos
+
+En este trabajo se propone la resolución de un problema de agrupación sobre un conjunto de datos seleccionados por el estudiante.
+
+En el caso de este trabajo, nos hemos decantado por el conjunto de datos [Palmer penguins](https://archive.ics.uci.edu/dataset/690/palmer+penguins-3), disponible en el UCI Machine Learning Repository. 
+
+El objetivo del trabajo es poner en práctica los conocimientos adquiridos en el bloque de agrupación de la asignatura, demostrando que se conoce la metodoloía y las herramientas para la creación de modelos de agrupación y que se es capaz de describir e interpretar los resultados obtenidos.
+
+
+# Descripción del conjunto de datos
+
+## Definición del problema
+
+**Información sobre el conjunto de datos**: los datos se recogieron como parte de una investigación para estudiar el comportamiento de búsqueda de alimento de los pingüinos antárticos y su relación con la variabilidad ambiental. Los datos se recogieron en el marco del programa de Investigación Ecológica a Largo Plazo de la Estación Palmer (Antártida), subvencionado por la Oficina de Programas Polares de la Fundación Nacional para la Ciencia (NSF-OPP).
+
+**Objetivo del conjunto de datos**: determinar la especie a la que pertenece cada pingüino.
+
+## Estudio del conjunto de datos
+
+### Estructura del conjunto de datos
+
+A continuación vamos a leer el conjunto de datos para ver con qué clase de datos vamos a trabajar:
+
+```{python}
+penguins = load_penguins()
+```
+
+Visualizamos las primeras 10 instancias para cerciorarnos de que se ha cargado correctamente el conjunto de datos:
+
+```{python}
+penguins.head()
+```
+
+Dado que el objetivo final de este trabajo es desarrollar técnicas de Agrupamiento, vamos a eliminar la variable objetivo para enfocarnos más en la parte de aprendizaje no supervisado
+
+```{python}
+X = penguins.drop(['species'], axis=1)
+```
+
+Una vez hecho todo esto, es el momento para revisar la estructura de conjunto de datos:
+
+```{python}
+X.info()
+```
+
+A partir de la función `info` podemos obtener la siguiente información:
+
+**Instancias**: cada instancia representa la información referente a un pingüino.
+
+**Regresores**:
+
+- island: corresponde con la isla en la que vive el pingüino
+- bill_lenght_mm: corresponde con la longitud del pico
+- bill_depth_mm: corresponde con la profundidad del pico
+- flipper_length_mm: correponde con la longitud de las aletas
+- body_mass_g: corresponde con el peso del pingüino
+- sex: corresponde con el sexo del pingüino
+- year: año de recolección de los datos del pingüino
+
+**Tipado de las variables**:
+
+- Numéricas: bill_lenght_mm, bill_depth_mm, flipper_length_mm, body_mass_g.
+- Categóricas: island, sex.
+- Fecha: year
+
+### Eliminación de variables
+
+Dado que la variable year nos informa del año de recolección de los datos de un individuo, optamos por eliminarla pues no nos aporta información interesante de cara a obtener información sobre los pingüinos y sus distintas especies.
+
+```{python}
+X = X.drop(['year'], axis=1)
+```
+
+### Instancias duplicadas
+
+Comprobemos si hay instancias duplicadas en el conjunto de datos:
+
+```{python}
+X.duplicated().any()
+```
+
+Como podemos observar no tenemos instancias duplicadas.
+
+### Valores faltantes
+
+Comprobemos si existen valores faltantes en el conjunto de datos:
+
+```{python}
+X.isna().sum().sort_values(ascending = False)
+```
+
+Podemos observar que los varios de los regresores presentan valores faltantes, veámos que como están distribuidos estos valores faltantes:
+
+```{python}
+sns.heatmap(X.isna(), cmap='YlGnBu', vmin=0, vmax=1)
+```
+
+Podemos observar solo dos instancias son las que presentan los valores faltantes para las variables bill_length_mm, bill_depth_mm, flipper_length_mm y body_mass_g. Vamos a optar por borrar dichas dos instancias pues al ser solo dos y teniendo en cuenta el tamaño del dataset, no perdemos casi nada de información por su eliminación:
+
+```{python}
+X = X.drop(X[X['bill_length_mm'].isna()].index, axis=0)
+```
+
+```{python}
+sns.heatmap(X.isna(), cmap='YlGnBu', vmin=0, vmax=1)
+```
+
+Como podemos observar, los demás valores faltantes se encuentran en la variable sex, veamos que proporción tenemos:
+
+```{python}
+X.isna().sum().sort_values(ascending = False) / X.shape[0]
+```
+
+El 2'63% de los valores de la variable sex son faltantes. Considerando que es un porcentaje bajo vamos a optar por eliminar también las instancias que presentan dichos valores faltantes:
+
+```{python}
+X = X.drop(X[X['sex'].isna()].index, axis=0)
+```
+
+```{python}
+X.isna().sum().sort_values(ascending = False) / X.shape[0]
+```
+
+Como podemos observar, ya no tenemos valores faltantes.
+
+### Estadística descriptiva
+
+En primer lugar dividamos las variables numéricas de las categóricas para facilitar el análisis de cada una por separado:
+
+```{python}
+numeric_cols = X.drop(['island', 'sex'], axis = 1)
+categorical_cols = X[['island', 'sex']]
+```
+
+Comprobemos que dicha división se ha hecho correctamente:
+
+```{python}
+print(numeric_cols.columns)
+print(categorical_cols.columns)
+```
+
+#### Variables numéricas
+
+##### Análisis de tendencia central
+
+```{python}
+pd.DataFrame({
+    'Mean': numeric_cols.mean(),
+    'Median': numeric_cols.median()
+})
+```
+
+*Observaciones*:
+
+- Salvo la variable body_mass_g, las demás variables numéricas presentan un valor de media bastante similar al de la mediana, indicio de que dichas variables presentan distribuciones simétricas y sin presencia de outliers. En el caso de la variable body_mass_g, es posible que presente cierta inclinación en la distribución, o la presencia de outliers.
+
+##### Análisis de dispersión
+
+**Mínimo, Máximo y Rango**:
+
+```{python}
+pd.DataFrame({
+    'Minimum': numeric_cols.min(),
+    'Maximum': numeric_cols.max(),
+    'Range': numeric_cols.max() - numeric_cols.min()
+})
+```
+
+*Observaciones*:
+
+- Las distintas variables numéricas presentan rango de valores diferentes, algo que es coherente teniendo en cuenta el significado de las variables:
+    - flipper_lenght_mm debe moverse en un rango de valores bastante más altos que bill_length_mm y bill_depth_mm pues, pues las dimensiones de la aleta de los pingüinos son más grandes que las dimensiones de su pico.
+
+- Los valores de la variable body_mass_g indican que el peso de los pingüinos observados oscila entre 2.7 Kg y 6.3 Kg, lo cual es coherente para especies de pingüinos pequeños.
+
+**Desviación estándar y varianza**:
+
+```{python}
+pd.DataFrame({
+    'Standard Deviation': numeric_cols.std(),
+    'Variance': numeric_cols.var()
+})
+```
+
+*Observaciones*:
+
+- Teniendo en cuenta el rango de valores de las variables, los valores de desviación estándar nos sugieren que en general los individuos tienden a concentrarse entorno a la media, esto nos indica que esta última medida es representativa.
+
+#### Variables categoricas
+
+##### Tablas de contingencia
+
+```{python}
+print(categorical_cols['sex'].value_counts())
+```
+
+```{python}
+print(categorical_cols['island'].value_counts())
+```
+
+*Observaciones*:
+
+- Tenemos en los datos casi igual número de especímenes machos que hembras.
+- La mayoría de los pingüinos se encuentran en las islas Biscoe y Dream, habiendo en estas más de el doble de individuos que en la isla Torgersen. Por lo tanto, la variable island presenta problema de desbalanceo de clases.
+
+
+### Visualización de datos
+
+Realicemos ciertas visualizaciones de los datos que tenemos, con esto validamos las observaciones extraídas con la estadística descriptiva, además de obtener información adicional.
+
+#### Variables numéricas
+
+##### Histogramas
+
+```{python}
+def plot_hist(data):
+  for column in data.columns:
+    bin_edges = np.histogram_bin_edges(data[column], bins='auto')
+    sns.displot(x=column, data=data, kde=True, bins=bin_edges)
+    mean_value = data[column].mean()
+    median_value = data[column].median()
+    plt.axvline(mean_value, color='red', linestyle='dashed', linewidth=2, label='Mean')
+    plt.axvline(median_value, color='green', linestyle='dashed', linewidth=2, label='Median')
+    plt.title(f'Distribución - {column}')
+    plt.xlabel('Valor')
+    plt.ylabel('Frecuencia')
+    plt.legend()
+    plt.show()
+```
+
+```{python}
+plot_hist(numeric_cols)
+```
+
+*Observaciones*:
+
+- Además de la variable body_mass_g, la variable flipper_length_mm también presenta una fuerte inclinación en la distribución. Las demás variables son bastante simétricas. Tambíen se puede observar que la tendencia de agruparse las instancias entorno a la media y mediana.
+
+#### Graficos de caja
+
+```{python}
+def plot_boxplot(data):
+  for column in data.columns:
+    sns.catplot(x=column, data=data, kind='box')
+    plt.title(f'Boxplot - {column}')
+    plt.xlabel('Valor')
+    plt.show()
+```
+
+```{python}
+plot_boxplot(numeric_cols)
+```
+
+*Observaciones*:
+
+- No parece haber instancias que se consideren como outliers en base al valor de alguno de sus regresores numéricos.
+
+#### Variables categóricas
+
+##### Graficos de barras
+
+```{python}
+def plot_bar(data):
+  for column in data.columns:
+    sns.countplot(x=column, data=data)
+    plt.title(f'Diagrama de Barras - {column}')
+    plt.xlabel('Categoría')
+    plt.ylabel('Frecuencia')
+    plt.show()
+```
+
+```{python}
+plot_bar(categorical_cols)
+```
+
+*Observaciones*:
+
+- Las mismas que las obtenidas con las tablas de contingencia.
+
+#### Relaciones entre variables
+
+##### Correlación entre variables numéricas
+
+```{python}
+visualizer = Rank2D(algorithm='pearson').fit(numeric_cols, numeric_cols)
+visualizer.transform(numeric_cols); 
+visualizer.show()
+```
+
+*Observaciones*:
+
+- Existe una muy alta correlación positiva entre body_mass_g y las variables bill_length y flipper_lenght_mm. Es coherente pues cuanto más pese el pingüino, lo más normal es que las dimensiones de las partes del cuerpo sean mayores.
+
+- Curiosamente, existe una considerable correlación negativa entre body_mass_g y bill_depth_mm, lo que quiere decir que cuanto mayor sea el tamaño del pingüino, menor será la profundidad del pico. Algo contrario a lo que decíamos con el punto anterior Esto puede sugerir que el los pingüinos que pesan más (y por tanto son más grandes) podrían representar una especie diferentes a los de los pingüinos que pesan menos (y por tanto son más pequeños). Esto mismo ocurre con bill_depth_mm vs flipper_lenght_mm y bill_depth_mm vs bill_length_mm. Posiblemente estas relaciones entre variables nos separen la población en grupos de los que podamos obtener información interesante.
