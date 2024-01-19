@@ -15,6 +15,12 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import silhouette_score
+from sklearn.metrics.cluster import calinski_harabasz_score
+from sklearn.metrics.cluster import davies_bouldin_score
+from sklearn_extra.cluster import KMedoids
 from matplotlib.colors import ListedColormap
 from palmerpenguins import load_penguins
 from yellowbrick.features import Rank1D, Rank2D
@@ -53,7 +59,7 @@ Visualizamos las primeras 10 instancias para cerciorarnos de que se ha cargado c
 penguins.head()
 ```
 
-Dado que el objetivo final de este trabajo es desarrollar técnicas de Agrupamiento, vamos a eliminar la variable objetivo para enfocarnos más en la parte de aprendizaje no supervisado
+Dado que el objetivo final de este trabajo es desarrollar técnicas de Agrupamiento, vamos a eliminar la variable objetivo para enfocarnos más en la parte de aprendizaje no supervisado.
 
 ```{python}
 X = penguins.drop(['species'], axis=1)
@@ -84,6 +90,18 @@ A partir de la función `info` podemos obtener la siguiente información:
 - Numéricas: bill_lenght_mm, bill_depth_mm, flipper_length_mm, body_mass_g.
 - Categóricas: island, sex.
 - Fecha: year
+
+### Planteamiento de hipótesis
+
+A partir de la información que tenemos podemos plantearnos las siguientes hipótesis:
+
+- ¿Cada especie de pingüino vive en una sola isla principalmente, o se encuentran mezcladas?
+
+Generalmente en el mundo animal los distintos individuos de una especie se encuentran agrupados en el mismo hábitat, separandose así especies por zonas.
+
+- ¿El tamaño de las partes del cuerpo del pingüino es relevante para distinguir las distintas especies?
+
+Existe distintas especies de mismo animales, y normalmente la diferencia entre estas se muestra en rasgo como el tamaño de distintas partes corporales.
 
 ### Eliminación de variables
 
@@ -117,23 +135,13 @@ Podemos observar que los varios de los regresores presentan valores faltantes, v
 sns.heatmap(X.isna(), cmap='YlGnBu', vmin=0, vmax=1)
 ```
 
-Podemos observar solo dos instancias son las que presentan los valores faltantes para las variables bill_length_mm, bill_depth_mm, flipper_length_mm y body_mass_g. Vamos a optar por borrar dichas dos instancias pues al ser solo dos y teniendo en cuenta el tamaño del dataset, no perdemos casi nada de información por su eliminación:
-
-```{python}
-X = X.drop(X[X['bill_length_mm'].isna()].index, axis=0)
-```
-
-```{python}
-sns.heatmap(X.isna(), cmap='YlGnBu', vmin=0, vmax=1)
-```
-
-Como podemos observar, los demás valores faltantes se encuentran en la variable sex, veamos que proporción tenemos:
+Podemos observar que algunas de las instancias que presentan valores faltantes en la variable sex son también las que presentan los valores faltantes en los demás regresores. Veamos que porcentaje de la variable sex representa:
 
 ```{python}
 X.isna().sum().sort_values(ascending = False) / X.shape[0]
 ```
 
-El 2'63% de los valores de la variable sex son faltantes. Considerando que es un porcentaje bajo vamos a optar por eliminar también las instancias que presentan dichos valores faltantes:
+El 3.2% de los valores de la variable sex son faltantes. Considerando que es un porcentaje bajo vamos a optar por eliminar las instancias que presentan dichos valores faltantes:
 
 ```{python}
 X = X.drop(X[X['sex'].isna()].index, axis=0)
@@ -147,7 +155,7 @@ Como podemos observar, ya no tenemos valores faltantes.
 
 ### Estadística descriptiva
 
-En primer lugar dividamos las variables numéricas de las categóricas para facilitar el análisis de cada una por separado:
+En primer lugar dividamos las variables numéricas de las categóricas para facilitar el análisis de cada tipo de variable por separado:
 
 ```{python}
 numeric_cols = X.drop(['island', 'sex'], axis = 1)
@@ -305,7 +313,7 @@ plot_bar(categorical_cols)
 
 ```{python}
 visualizer = Rank2D(algorithm='pearson').fit(numeric_cols, numeric_cols)
-visualizer.transform(numeric_cols); 
+visualizer.transform(numeric_cols) 
 visualizer.show()
 ```
 
@@ -313,4 +321,379 @@ visualizer.show()
 
 - Existe una muy alta correlación positiva entre body_mass_g y las variables bill_length y flipper_lenght_mm. Es coherente pues cuanto más pese el pingüino, lo más normal es que las dimensiones de las partes del cuerpo sean mayores.
 
-- Curiosamente, existe una considerable correlación negativa entre body_mass_g y bill_depth_mm, lo que quiere decir que cuanto mayor sea el tamaño del pingüino, menor será la profundidad del pico. Algo contrario a lo que decíamos con el punto anterior Esto puede sugerir que el los pingüinos que pesan más (y por tanto son más grandes) podrían representar una especie diferentes a los de los pingüinos que pesan menos (y por tanto son más pequeños). Esto mismo ocurre con bill_depth_mm vs flipper_lenght_mm y bill_depth_mm vs bill_length_mm. Posiblemente estas relaciones entre variables nos separen la población en grupos de los que podamos obtener información interesante.
+- Curiosamente, existe una considerable correlación negativa entre body_mass_g y bill_depth_mm, lo que quiere decir que cuanto mayor sea el tamaño del pingüino, menor será la profundidad del pico. Algo contrario a lo que decíamos con el punto anterior. Esto puede sugerir que los pingüinos que pesan más (y por tanto son más grandes) podrían representar una especie diferentes a los de los pingüinos que pesan menos (y por tanto son más pequeños). Esto mismo ocurre con bill_depth_mm vs flipper_lenght_mm y bill_depth_mm vs bill_length_mm. Posiblemente estas relaciones entre variables nos separen la población en grupos de los que podamos obtener información interesante.
+
+
+# Metodología a seguir en el Agrupamiento.
+
+Vamos a realizar una serie de pruebas con distintos tipos de algoritmos de agrupación:
+
+*Basados en particiones*: en este caso vamos a probar con los algoritmos:
+
+- Kmedias: probaremos este algoritmo usando como función de coste la distancia euclidiana y la de mahalanobis, esto lo hacemos así pues la distancia euclidiana es la estándar y la de mahalanobis tiene en cuenta la correlación entre variables, además de que permite encontrar clústeres con formas de elipses, a diferencia de la euclidiana que sólo encuentra clústeres con formas circulares.
+
+- Kmedoides: probaremos este algoritmo para compararlo con K-medias y también obtener los centroides con el k apropiado, los cuáles nos dan una idea de el tipo de instancias que representan a los grupos de la población.
+
+En primer lugar elegiremos el mejor k para cada algoritmo (para la elección del mejor k usaremos la regla del primer codo.), tras esto calcularemos medidas de calidad del agrupamiento con dicho k. Finalmente compararemos los resultados obtenidos para cada algoritmo.
+
+- Medidas de calidad usadas:
+
+Silhouette Score: mide la cohesión dentro de los clústeres y la separación entre los clústeres. Toma valores entre -1 y 1, donde un valor más cercano a 1 indica una mejor estructura de clustering.
+
+Davies-Bouldin Index: Mide la "compacidad" y la "separación" entre los clústeres. Cuanto más bajo sea el índice, mejor será el clustering.
+
+Calinski-Harabasz Index: evalúa la coherencia dentro de los clústeres en comparación con la separación entre los clústeres. Un valor más alto indica una mejor calidad del clustering.
+
+# Experimentación y discusión de los resultados
+
+## Tratamiento de variables categoricas
+
+Antes de aplicar los algoritmos de Agrupación debemos de codificar las variables categóricas de tal forma que estos algoritmos las puedan utilizar
+
+En el caso del regresor sex, al tener dos posibles clases, vamos optar por binarizar la variable:
+
+```{python}
+lb = LabelBinarizer()
+X['sex'] = lb.fit_transform(X['sex'])
+```
+
+En el caso del regresor island, dado que tiene tres clases y no existe ninguna relación de orden entre estas, vamos a optar por una codificación one hot enconde:
+
+```{python}
+encoder = OneHotEncoder(sparse_output=False, dtype=np.float64)
+df_one_hot = pd.DataFrame(encoder.fit_transform(X[['island']]), 
+                          columns=encoder.get_feature_names_out(['island']))
+X = pd.concat([X, df_one_hot], axis=1)
+X = X.drop(['island'], axis=1)
+X = X.dropna(subset=['sex', 'island_Biscoe'], axis=0)
+```
+
+## Normalización de variables
+
+Dado que vamos a trabajar con algoritmos que se baasn en el cálculo de distancias, vamos a normalizar las variable para que unas variables no dominen sobre otras a causa de su rango de valores:
+
+```{python}
+X[X.columns] = (X[X.columns]-X[X.columns].min())/ (X[X.columns].max()-X[X.columns].min())
+X_norm = X
+```
+
+## Algoritmos basados en particiones
+
+### K-medias
+
+Primero definamos las funciones que utilizaremos para visualizar los clústeres:
+
+```{python}
+def show_clusters_kmeans(X, c=None, centroids=None,i=0,j=0):
+    cmap_bold = ListedColormap(['#FF0000', '#00FF00', '#FFFF00', '#0000FF'])
+    
+    plt.figure(figsize=(10,8))
+    plt.scatter(X.iloc[:, i], X.iloc[:, j], c=c, cmap=cmap_bold, s=60)
+
+    if centroids is not None:
+        plt.scatter(centroids.iloc[:,i], centroids.iloc[:,j], marker='*', c=range(centroids.shape[0]), s=500)
+    
+    plt.show()
+
+def show_clusters_kmedoids(X, c=None, centroids=None,i=0,j=0):
+    cmap_bold = ListedColormap(['#FF0000', '#00FF00', '#FFFF00', '#0000FF'])
+
+    plt.figure(figsize=(10,8))
+    plt.scatter(X.iloc[:, i], X.iloc[:, j], c=c, cmap=cmap_bold, s=60)
+
+    if centroids is not None:
+        plt.scatter(centroids[:,i], centroids[:,j], marker='*', c=range(centroids.shape[0]), s=500)
+
+    plt.show()
+```
+
+En el caso del algoritmo K-medias, dado que queremos experimentar variando la función de coste, vamos a utilizar la implementación a mano que vimos en clase y la vamos a modificar para que podamos elegir si queremos usar la distancia euclídea o de mahalanobis
+
+```{python}
+def asigna(X, centroides, distancia='euclidiana'):
+    distancias = np.zeros((X.shape[0], centroides.shape[0]))
+    for i in range(centroides.shape[0]):
+        if distancia == 'euclidiana':
+            distancias[:, i] = np.sqrt(np.sum(np.square(X - centroides.iloc[i]), axis=1))
+        elif distancia == 'mahalanobis':
+            diff = X - centroides.iloc[i]
+            cov_inv = np.linalg.inv(np.cov(X, rowvar=False))
+            mahalanobis_dist = np.sum(np.dot(diff, cov_inv) * diff, axis=1)
+            distancias[:, i] = np.sqrt(mahalanobis_dist)
+    c = np.argmin(distancias, axis=1)
+    return c
+
+def actualiza(X, c, k):
+    new_centroids_list = []
+    for i in range(k):
+        cluster_mean = X.iloc[c == i].mean()
+        new_centroids_list.append(cluster_mean)
+    return pd.DataFrame(new_centroids_list, columns=X.columns)
+
+def coste(X, centroides, c, distancia='euclidiana'):
+    coste = 0
+    for i in range(centroides.shape[0]):
+        if distancia == 'euclidiana':
+            coste += np.sum(np.sum(np.square(X.loc[c == i, :] - centroides.iloc[i, :]), axis=1))
+        elif distancia == 'mahalanobis':
+            diff = X.loc[c == i, :] - centroides.iloc[i, :]
+            cov_inv = np.linalg.inv(np.cov(X, rowvar=False))
+            mahalanobis_dist = np.sum(np.dot(diff, cov_inv) * diff, axis=1)
+            coste += np.sum(mahalanobis_dist)
+    return coste / X.shape[0]
+
+def kmeans(X, k, it=10, distancia='euclidiana'):
+    centros = X.iloc[np.random.permutation(X.shape[0])[:k], :]
+    J = np.zeros((it))
+    for i in range(it):
+        c = asigna(X, centros, distancia)
+        centros = actualiza(X, c, k)
+        J[i] = coste(X, centros, c, distancia)
+    return centros, J, c
+
+def executeKmeans(X, k, repeticiones=100, distancia='euclidiana'):
+    Jmin = np.inf
+    Cmin = None
+    for i in range(repeticiones):
+        centroids, J, c = kmeans(X, k, distancia=distancia)
+        if J[-1] < Jmin:
+            Jmin = J[-1]
+            centroidsMin = centroids
+            Cmin = c
+    return centroidsMin, Jmin, Cmin
+
+def executeKmedoids(X, k, repeticiones=100):
+    Jmin = np.inf
+    Cmin = None
+    for i in range(repeticiones):
+        kmedoids = KMedoids(n_clusters=k, init='random').fit(X)
+        centroids=kmedoids.cluster_centers_
+        c=kmedoids.labels_
+        J=kmedoids.inertia_
+        if J < Jmin:
+            Jmin = J
+            centroidsMin = centroids
+            Cmin = c
+    return centroidsMin, Jmin, Cmin
+```
+
+Vamos a ejecutar K-medias con la siguiente configuración:
+
+- K: de 2 a 6
+- distancia: euclidiana
+- repeticiones: 100
+
+```{python}
+error_coefficients = []
+
+for k in np.arange(2,7):
+    centros, J, c = executeKmeans(X_norm,k,distancia='euclidiana')
+    error_coefficients.append(J)
+```
+
+Mostramos la curva del error obtenido:
+
+```{python}
+plt.figure(figsize=(10, 8))
+plt.plot(error_coefficients)
+plt.show()
+```
+
+En dicha curva no encontramos ningún codo que nos indique claramente cual es el mejor K. Vamos a optar por el primer codo que se visualiza, el cual es para K = 3
+
+A continuación calculemos las medidas de calidad
+
+```{python}
+results = pd.DataFrame({
+    'Algoritmo': ["Kmeans-euclidean"],
+    'Silhouette Score': [silhouette_score(X_norm, c)],
+    'Davies-Bouldin Index': [davies_bouldin_score(X_norm, c)],
+    'Calinski-Harabasz Index': [calinski_harabasz_score(X_norm, c)]
+})
+
+results
+```
+
+A continuación vamos a ejecutar K-medias con la siguiente configuración:
+
+- K: de 2 a 6
+- distancia: mahalanobis
+- repeticiones: 100
+
+```{python}
+error_coefficients = []
+
+for k in np.arange(2,7):    
+    centros, J, c = executeKmeans(X_norm,k,distancia='mahalanobis')
+    error_coefficients.append(J)
+```
+
+Mostramos la curva del error obtenido:
+
+```{python}
+plt.figure(figsize=(10, 8))
+plt.plot(error_coefficients)
+plt.show()
+```
+
+De nuevo, no visualizamos ningún codo que nos indique claramente cuál es el mejor valor de K. Elegiremos K = 3 pues es el primer codo que se aprecia y además nos servirá para comparar con K-medias usando la distancia euclidea.
+
+A continuación calculemos las medidas de calidad
+
+```{python}
+r = pd.DataFrame({
+    'Algoritmo': ["Kmeans-mahalanobis"],
+    'Silhouette Score': [silhouette_score(X_norm, c)],
+    'Davies-Bouldin Index': [davies_bouldin_score(X_norm, c)],
+    'Calinski-Harabasz Index': [calinski_harabasz_score(X_norm, c)]
+})
+
+results = pd.concat([results, r], ignore_index=True)
+results
+```
+
+En base a los resultados concluimos que para el algoritmo K-medias la mejor función de coste de las utilizadas es la euclidiana. Tanto usando la distancia euclidiana como la de mahalanobis hemos obtenido un valor de k = 3, pero en el caso de la distancia euclidiana esta obtiene mejores resultados en la métricas de calidad que mahalanobis. Pensando en el dataset que tenemos esto tiene bastante sentido, ya que la mayoría de los regresores representan medidas de partes del cuerpo de los pingüinos, las cuales son medidas usando la distancia euclidiana.
+
+### K-medoides
+
+A continuación vamos a aplicar el algoritmo K-medoides con la siguiente configuración:
+
+- K: de 2 a 6
+- distancia: euclidiana
+- repeticiones: 100
+
+```{python}
+error_coefficients = []
+
+for k in np.arange(2,7):
+    centros, J, c = executeKmedoids(X_norm, k)
+
+    error_coefficients.append(J)
+```
+
+Mostramos la curva del error obtenido:
+
+```{python}
+plt.figure(figsize=(10, 8))
+plt.plot(error_coefficients)
+plt.show()
+```
+
+Tal y como pasaba con K-medias, no se visualiza ningún codo que nos muestre cual es el mejor K. De cara a comparar con los otros agrupamientos elegiremos de nuevo K = 3.
+
+A continuación calculemos las medidas de calidad
+
+```{python}
+r = pd.DataFrame({
+    'Algoritmo': ["Kmedoids"],
+    'Silhouette Score': [silhouette_score(X_norm, c)],
+    'Davies-Bouldin Index': [davies_bouldin_score(X_norm, c)],
+    'Calinski-Harabasz Index': [calinski_harabasz_score(X_norm, c)]
+})
+
+results = pd.concat([results, r], ignore_index=True)
+results
+```
+
+Podemos observar que hemos obtenido unos resultados muy similares a los obtenidos con K-medias con la distancia euclidiana, un poco mejores en el caso de K-medoides, y además debemos tener en cuenta que la interpretabilidad que nos aporta K-medoides al ser los centroides instancias del conjunto de datos. Esto es algo que vamos a utilizar. Vamos a mostrar dichos centroides para tener una idea de los tres grupos que parece haber en la población:
+
+```{python}
+centros, J, c = executeKmedoids(X_norm, k = 3)
+centros
+```
+
+Describamos la instancia representante de cada grupo:
+
+*Grupo 1*: 
+
+- bill_length_mm: 0.51636364
+- bill_depth_mm: 0.32142857
+- flipper_length_mm: 0.72881356
+- body_mass_g: 0.65277778
+- sex: 1 (macho o hembra)
+- istand: Biscoe
+
+*Grupo 2*: 
+
+- bill_length_mm: 0.47272727
+- bill_depth_mm: 0.1547619 
+- flipper_length_mm: 0.6440678
+- body_mass_g: 0.47222222
+- sex: 0 (macho o hembra)
+- istand: Biscoe
+
+*Grupo 3*: 
+
+- bill_length_mm: 0.49454545
+- bill_depth_mm: 0.5 
+- flipper_length_mm: 0.3559322
+- body_mass_g: 0.25
+- sex: 0 (macho o hembra)
+- istand: Dream
+
+A partir de los centroides podemos sacar las siguientes conclusiones:
+
+- El grupo 1 y 2 parecen ser pingüinos de un tamaño parecido, a diferencia del grupo 3 que fijándonos en los regresores de masa corporal y medidas corporales se ve son un grupo de pingüinos considerablemente menores.
+
+Comprobémoslo mostrando bill_length_mm vs body_mass_g:
+
+```{python}
+show_clusters_kmedoids(X_norm, c, centros, i=1,j=3)
+```
+
+Como podemos observar, la mayoría de las instancias de dos de los tres clústeres están situados en una zona muy cercana, mientras que la mayoría del otro grupo se encuentran agrupados en una zona aparte. Concuerda con lo dicho.
+
+- El grupo 3 vive en la isla Dream, mientras que el grupo 1 y 2 viven en su mayoría en las isla Biscoe.
+
+Comprobemoslo:
+
+```{python}
+X_norm = X_norm.reset_index(drop=True)
+group0 = X_norm.loc[np.where(c == 0)[0]]
+group1 = X_norm.loc[np.where(c == 1)[0]]
+group2 = X_norm.loc[np.where(c == 2)[0]]
+```
+
+```{python}
+print(sum(group0['island_Biscoe']))
+print(sum(group0['island_Dream']))
+print(sum(group0['island_Torgersen']))
+```
+
+```{python}
+print(sum(group1['island_Biscoe']))
+print(sum(group1['island_Dream']))
+print(sum(group1['island_Torgersen']))
+```
+
+```{python}
+print(sum(group2['island_Biscoe']))
+print(sum(group2['island_Dream']))
+print(sum(group2['island_Torgersen']))
+```
+
+Podemos observar que el grupo 0 está en su mayoría en la isla Dream, mientras que el grupo 2 y 3 están en su mayoría en la isla Biscoe. Algo interesante es que el grupo 2 se encuentra en su totalidad en la isla Biscoe mientras que los otros presentan algunos en la isla Torgensen además de su isla principal. 
+
+- Entre el grupo 1 y 2 la mayor diferencia se da en las medidas referentes a la profundidad y del pico. En cuanto al grupo 3 este destaca por tener una profundidad del pico considerablemente mayor al de los otros dos grupos
+
+Comprobémoslo:
+
+```{python}
+show_clusters_kmedoids(X_norm, c, centros, i=0,j=1)
+```
+
+Como podemos observar claramente que fijándonos en el eje Y (anchura pico) podemos clasificar perfectamente los tres grupos.
+
+# Conclusiones
+
+A partir del estudio de Agrupaciones que hemos hecho sacamos las siguientes conclusiones:
+
+- Dentro de toda la población parece haber tres grandes grupos que se pueden diferenciar claramente, ya sea por el tamaño de los especímenes y por tanto de sus partes corporales, o por la isla en la que viven. Teniendo en cuenta las hipótesis que nos planteamos en un principio, podemos ver que la información que hemos obtenido concuerda con lo planteado en dichas hipótesis.
+
+# Bibliografía
+
+- [Sección del dataset Palmer Penguin en UCI](https://archive.ics.uci.edu/dataset/690/palmer+penguins-3)
+
+- [Página oficial del dataset Palmer Penguin](https://allisonhorst.github.io/palmerpenguins/)
+
+- [Paper donde se publicó el dataset](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0090081)
